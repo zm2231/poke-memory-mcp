@@ -402,6 +402,36 @@ def _match_reasons(query, title, body, width=360):
     return snippet.strip(), matched
 
 
+def _provenance(meta, which):
+    out = {"scope": which}
+    created = meta.get("created") or meta.get("session_start")
+    updated = meta.get("updated") or meta.get("session_end")
+    if created:
+        out["created"] = str(created)
+    if updated:
+        out["updated"] = str(updated)
+    src = meta.get("source")
+    if isinstance(src, (list, tuple)):
+        srcs = [str(x) for x in src if x][:10]
+    elif src:
+        srcs = [str(src)]
+    else:
+        srcs = []
+    if srcs:
+        out["source"] = srcs
+    if meta.get("promoted_from"):
+        out["promoted_from"] = str(meta["promoted_from"])
+    if meta.get("source_type"):
+        out["source_type"] = str(meta["source_type"])
+    prov = meta.get("provenance")
+    if isinstance(prov, list):
+        items = [{"type": str(x.get("type", "")), "path": str(x.get("path", ""))}
+                 for x in prov if isinstance(x, dict)]
+        if items:
+            out["promoted_sources"] = items[:10]
+    return out
+
+
 def _search_one(which, query, type_, project, person, limit, vector_weight):
     s = get_searcher(which)
     if s is None:
@@ -432,6 +462,7 @@ def _search_one(which, query, type_, project, person, limit, vector_weight):
             "snippet": redact(snip),
             "matched_terms": matched,
             "match": "term+semantic" if matched else "semantic",
+            "provenance": _provenance(meta, which),
         })
         rank += 1
         if len(out) >= limit:
@@ -1250,8 +1281,16 @@ def vault_get(path: str, offset: int = 0) -> str:
         raw = f.read(MAX_CONTENT_RETURN)
     chunk = raw.decode("utf-8", "replace")
     truncated = (offset + len(raw)) < total
+    resp = {"path": path, "total_bytes": total, "offset": offset, "returned_bytes": len(raw), "truncated": truncated, "content": redact(chunk)}
+    if offset == 0:
+        try:
+            meta, _ = card_meta(p)
+            parts = Path(path).parts
+            resp["provenance"] = _provenance(meta, parts[0] if parts else "")
+        except Exception:
+            pass
     audit("vault_get", {"path": path, "offset": offset, "truncated": truncated})
-    return json.dumps({"path": path, "total_bytes": total, "offset": offset, "returned_bytes": len(raw), "truncated": truncated, "content": redact(chunk)}, indent=2)
+    return json.dumps(resp, indent=2)
 
 
 @mcp.tool(
