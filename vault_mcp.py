@@ -1549,6 +1549,78 @@ def vault_duplicates(scope: str = "canonical", threshold: float = 0.6, limit: in
                        "truncated": truncated, "cluster_count": len(out), "clusters": out[:limit]}, indent=2)
 
 
+EXPORT_DIR = VAULT_ROOT / ".vault" / "export"
+EXPORT_MAX_CARDS = 5000
+EXPORT_INDEX_INLINE = 200
+
+
+@mcp.tool(
+    name="vault_export",
+    description=(
+        "Write a portable snapshot of the memory so it can move to another assistant or machine. Bundles the active "
+        "folder manifest plus every canonical card (path, title, type, provenance, and full body) into one JSON file "
+        "at .vault/export/vault-export.json (overwritten each call), and returns the manifest plus a card index. "
+        "include_raw=true also bundles the inbox/ raw captures (larger). Bodies are redacted. Use to hand the owner's "
+        "durable context to a new agent, back it up, or migrate it. The bundle file is local to the host; tell the "
+        "owner the path to retrieve it."
+    ),
+)
+def vault_export(include_raw: bool = False) -> str:
+    m = get_manifest()
+    manifest = {name: {"kind": f.get("kind"), "trigger": f.get("trigger", "")}
+                for name, f in m["folders"].items() if isinstance(f, dict)}
+    folders = list(canon_dirs())
+    if include_raw:
+        folders.append("inbox")
+    cards = []
+    truncated = False
+    for kind in folders:
+        d = VAULT_ROOT / kind
+        if not d.exists():
+            continue
+        for p in sorted(d.glob("*.md")):
+            if len(cards) >= EXPORT_MAX_CARDS:
+                truncated = True
+                break
+            meta, body = card_meta(p)
+            cards.append({
+                "path": str(p.relative_to(VAULT_ROOT)),
+                "title": redact(str(meta.get("title", p.stem))),
+                "type": meta.get("entity_type") or meta.get("kind") or kind,
+                "provenance": _provenance(meta, kind),
+                "body": redact(body or ""),
+            })
+        if truncated:
+            break
+    bundle = {"generated": _now(), "vault": VAULT_DESC, "manifest": manifest,
+              "card_count": len(cards), "truncated": truncated, "cards": cards}
+    text = redact(json.dumps(bundle, indent=2))
+    try:
+        EXPORT_DIR.mkdir(parents=True, exist_ok=True)
+        dest = (EXPORT_DIR / "vault-export.json").resolve()
+        if os.path.commonpath([str(dest), VROOT_REAL]) != VROOT_REAL or dest.parent != EXPORT_DIR.resolve():
+            return json.dumps({"error": "export path escapes the vault (symlink?)"})
+        tmp = dest.with_name(dest.name + ".tmp")
+        with _write_lock:
+            tmp.write_text(text)
+            os.replace(tmp, dest)
+    except (OSError, ValueError) as e:
+        return json.dumps({"error": "could not write export bundle", "detail": str(e)[:200]})
+    index = [{"path": c["path"], "title": c["title"], "type": c["type"]} for c in cards]
+    audit("vault_export", {"cards": len(cards), "bytes": len(text), "include_raw": bool(include_raw)})
+    return json.dumps({
+        "ok": True,
+        "path": str(dest.relative_to(VAULT_ROOT)),
+        "card_count": len(cards),
+        "truncated": truncated,
+        "bytes": len(text),
+        "manifest": manifest,
+        "index": index[:EXPORT_INDEX_INLINE],
+        "index_truncated": len(index) > EXPORT_INDEX_INLINE,
+        "note": "Full portable bundle (cards + bodies + provenance) written to path; this response carries the manifest + card index only. The file is on the host - retrieve it there.",
+    }, indent=2)
+
+
 @mcp.tool(
     name="vault_write",
     description="Persist a new fact or note to memory. Writes a timestamped card into inbox/ (searchable after the next reindex, promoted to canonical later). kind: an entity hint - 'note', or a canonical folder/singular like project/person (see vault_status for the live folder set); anything unrecognized is stored as a note. tags: list of short tags. links: list of related card slugs (recorded as [[wikilinks]]/relations).",
