@@ -119,6 +119,24 @@ def speaker(r):
     return "Me" if r["is_from_me"] else "Poke"
 
 
+def local_dt(created_at):
+    s = created_at.strip()
+    if s.endswith("Z"):
+        s = s[:-1] + "+00:00"
+    try:
+        dt = datetime.datetime.fromisoformat(s)
+    except ValueError:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=datetime.timezone.utc)
+    return dt.astimezone()
+
+
+def local_day(created_at):
+    dt = local_dt(created_at)
+    return dt.date().isoformat() if dt else created_at[:10]
+
+
 def day_doc(day, rows):
     fm = [
         "---",
@@ -134,7 +152,12 @@ def day_doc(day, rows):
         f"# Poke conversation {day}",
         "",
     ]
-    body = [f"**{r['created_at'][:10]} {r['created_at'][11:16]} {speaker(r)}:** {r['text']}" for r in rows]
+    body = []
+    for r in rows:
+        dt = local_dt(r["created_at"])
+        ds = dt.date().isoformat() if dt else r["created_at"][:10]
+        hm = dt.strftime("%H:%M") if dt else r["created_at"][11:16]
+        body.append(f"**{ds} {hm} {speaker(r)}:** {r['text']}")
     return "\n".join(fm + body) + "\n"
 
 
@@ -189,8 +212,8 @@ def main():
     msgs.sort(key=lambda r: (r["created_at"], r["guid"], r["sender"], r["text"]))
     days = collections.defaultdict(list)
     for r in msgs:
-        days[r["created_at"][:10]].append(r)
-    today = datetime.datetime.now(datetime.timezone.utc).date().isoformat()
+        days[local_day(r["created_at"])].append(r)
+    today = datetime.datetime.now().astimezone().date().isoformat()
     written, unchanged, deferred = write_days(days, today)
     removed = cleanup_month_files()
     print(f"chats matched: {n_chats}  messages: {len(msgs)}  days: {len(days)}  "

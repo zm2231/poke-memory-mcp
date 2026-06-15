@@ -129,6 +129,11 @@ echo "Keep the Poke iMessage thread captured into the vault on a daily schedule 
 echo "Needs the 'imsg' CLI installed and Full Disk Access granted to the ingest job."
 ask INGEST_CHOICE "Enable automatic message ingest? [Y/n]" "Y"
 case "$INGEST_CHOICE" in n|N|no|NO) INGEST=0 ;; *) INGEST=1 ;; esac
+INGEST_HOUR=0; INGEST_MINUTE=15
+if [ "$INGEST" = "1" ]; then
+  echo "Messages are sharded by local day; the ingest runs daily and captures the day that just ended."
+  ask INGEST_HOUR "  run the daily ingest at this local hour (0-23)" "0"
+fi
 
 echo
 bold "Writing $ENVF"
@@ -156,6 +161,8 @@ envq(){ printf "%s='%s'\n" "$1" "$(printf '%s' "$2" | sed "s/'/'\\\\''/g")"; }
   envq NGROK_BIN "$NGROK_BIN"
   envq INGEST "$INGEST"
   envq INGEST_INTERVAL "86400"
+  envq INGEST_HOUR "$INGEST_HOUR"
+  envq INGEST_MINUTE "$INGEST_MINUTE"
   envq POKE_NAME_REGEX '^poke$'
 } > "$ENVF"
 chmod 600 "$ENVF"

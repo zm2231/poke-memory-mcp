@@ -34,8 +34,13 @@
   </dict>
   <key>RunAtLoad</key>
   <true/>
-  <key>StartInterval</key>
-  <integer>@@INGEST_INTERVAL@@</integer>
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key>
+    <integer>@@INGEST_HOUR@@</integer>
+    <key>Minute</key>
+    <integer>@@INGEST_MINUTE@@</integer>
+  </dict>
   <key>StandardOutPath</key>
   <string>@@APP_DIR@@/ingest.log</string>
   <key>StandardErrorPath</key>

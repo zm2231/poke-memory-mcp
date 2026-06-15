@@ -14,6 +14,11 @@ INGRESS="${INGRESS:-named}"
 INGEST="${INGEST:-1}"
 export NGROK_BIN="${NGROK_BIN:-}"
 export INGEST_INTERVAL="${INGEST_INTERVAL:-86400}"
+export INGEST_HOUR="${INGEST_HOUR:-0}"
+export INGEST_MINUTE="${INGEST_MINUTE:-15}"
+case "$INGEST_HOUR" in ''|*[!0-9]*) INGEST_HOUR=0 ;; *) [ "$INGEST_HOUR" -le 23 ] || INGEST_HOUR=0 ;; esac
+case "$INGEST_MINUTE" in ''|*[!0-9]*) INGEST_MINUTE=15 ;; *) [ "$INGEST_MINUTE" -le 59 ] || INGEST_MINUTE=15 ;; esac
+export INGEST_HOUR INGEST_MINUTE
 export POKE_NAME_REGEX="${POKE_NAME_REGEX:-^poke$}"
 export POKE_NUMBERS="${POKE_NUMBERS:-}"
 export POKE_IDENTIFIERS="${POKE_IDENTIFIERS:-}"
@@ -129,6 +134,8 @@ repl = {
     "@@CF_CRED_FILE@@": os.environ.get("CF_CRED_FILE", ""),
     "@@CF_HOSTNAME@@": os.environ.get("CF_HOSTNAME", ""),
     "@@INGEST_INTERVAL@@": os.environ.get("INGEST_INTERVAL", "86400"),
+    "@@INGEST_HOUR@@": os.environ.get("INGEST_HOUR", "0"),
+    "@@INGEST_MINUTE@@": os.environ.get("INGEST_MINUTE", "15"),
     "@@POKE_NUMBERS@@": os.environ.get("POKE_NUMBERS", ""),
     "@@POKE_NAME_REGEX@@": os.environ.get("POKE_NAME_REGEX", "^poke$"),
     "@@POKE_IDENTIFIERS@@": os.environ.get("POKE_IDENTIFIERS", ""),
@@ -231,6 +238,8 @@ echo "==> write resolved config + install poke-vault CLI"
   printf 'POKE_VAULT_RAW_INDEX=%q\n' "$POKE_APP_DIR/.leann/indexes/poke-vault-raw/documents.leann"
   printf 'INGRESS=%q\n' "$INGRESS"
   printf 'INGEST=%q\n' "$INGEST"
+  printf 'INGEST_HOUR=%q\n' "$INGEST_HOUR"
+  printf 'INGEST_MINUTE=%q\n' "$INGEST_MINUTE"
   printf 'POKE_NAME_REGEX=%q\n' "$POKE_NAME_REGEX"
   printf 'POKE_NUMBERS=%q\n' "$POKE_NUMBERS"
   printf 'POKE_IDENTIFIERS=%q\n' "$POKE_IDENTIFIERS"
