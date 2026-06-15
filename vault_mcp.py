@@ -1277,6 +1277,101 @@ def vault_list(kind: str) -> str:
 
 
 @mcp.tool(
+    name="vault_index_health",
+    description=(
+        "Health snapshot of the vault for maintenance: index freshness, canonical cards per folder + total, inbox "
+        "backlog size, archived message count, and quality flags - cards missing required frontmatter "
+        "(title/entity_type/status), duplicate titles, and canonical cards with no inbound [[wikilink]]. Use to decide "
+        "what to clean up (promote inbox, dedupe, fix metadata) or to confirm the index is current. Read-only."
+    ),
+)
+def vault_index_health() -> str:
+    cards = _load_cards()
+    by_folder = {}
+    missing = []
+    titles = {}
+    for c in cards:
+        by_folder[c["kind"]] = by_folder.get(c["kind"], 0) + 1
+        m = c["meta"] if isinstance(c.get("meta"), dict) else {}
+        miss = [f for f in ("title", "entity_type", "status") if not m.get(f)]
+        if miss:
+            missing.append({"path": c["path"], "missing": miss})
+        t = str(m.get("title") or Path(c["path"]).stem)
+        titles.setdefault(t, []).append(c["path"])
+    dupes = {redact(t): ps for t, ps in titles.items() if len(ps) > 1}
+    g = _load_link_graph()
+    orphans = [n["path"] for slug, n in g["nodes"].items() if not g["inc"].get(slug)]
+    inbox_dir = VAULT_ROOT / "inbox"
+    inbox_n = len(list(inbox_dir.glob("*.md"))) if inbox_dir.exists() else 0
+    try:
+        msg_n = len(_load_messages())
+    except Exception:
+        msg_n = 0
+    audit("vault_index_health", {"cards": len(cards), "missing": len(missing), "dupes": len(dupes), "orphans": len(orphans)})
+    return json.dumps({
+        "freshness": index_freshness("all"),
+        "canonical_by_folder": by_folder,
+        "canonical_total": len(cards),
+        "inbox_backlog": inbox_n,
+        "messages": msg_n,
+        "missing_frontmatter_count": len(missing),
+        "missing_frontmatter": missing[:50],
+        "duplicate_title_count": len(dupes),
+        "duplicate_titles": dict(list(dupes.items())[:30]),
+        "no_inbound_links_count": len(orphans),
+        "no_inbound_links": sorted(orphans)[:50],
+    }, indent=2)
+
+
+@mcp.tool(
+    name="vault_audit",
+    description=(
+        "Query the vault's own MCP call log (which tools ran, when, with what, and any errors) - the audit trail every "
+        "tool writes. event: substring-match the event name (e.g. 'vault_write', 'search', 'reindex'); errors_only: "
+        "only failed/error events; since: ISO timestamp lower bound (e.g. '2026-06-15'); limit: max entries (default "
+        "50, cap 500). Returns matched count, a by-event tally, and the most recent matching entries. Use to see what "
+        "happened, debug a failure, or review recent writes. Read-only."
+    ),
+)
+def vault_audit(event: str = "", errors_only: bool = False, since: str = "", limit: int = 50) -> str:
+    try:
+        limit = int(limit)
+    except (TypeError, ValueError):
+        limit = 50
+    limit = max(1, min(limit, 500))
+    ev_filter = str(event or "").strip()
+    since = str(since or "").strip()
+    try:
+        lines = AUDIT_LOG.read_text(errors="replace").splitlines()[-5000:]
+    except OSError:
+        lines = []
+    matched = []
+    by_event = {}
+    for ln in lines:
+        try:
+            rec = json.loads(ln)
+        except (ValueError, TypeError):
+            continue
+        if not isinstance(rec, dict):
+            continue
+        ev = str(rec.get("event", ""))
+        ts = str(rec.get("ts", ""))
+        det = rec.get("detail") if isinstance(rec.get("detail"), dict) else {}
+        is_err = ev.endswith("_error") or any(k in det for k in ("error", "err"))
+        if since and ts < since:
+            continue
+        if errors_only and not is_err:
+            continue
+        if ev_filter and ev_filter not in ev:
+            continue
+        by_event[ev] = by_event.get(ev, 0) + 1
+        matched.append(rec)
+    out = matched[-limit:]
+    audit("vault_audit", {"event": ev_filter, "errors_only": bool(errors_only), "returned": len(out)})
+    return json.dumps({"matched": len(matched), "returned": len(out), "by_event": by_event, "entries": out}, indent=2)
+
+
+@mcp.tool(
     name="vault_write",
     description="Persist a new fact or note to memory. Writes a timestamped card into inbox/ (searchable after the next reindex, promoted to canonical later). kind: an entity hint - 'note', or a canonical folder/singular like project/person (see vault_status for the live folder set); anything unrecognized is stored as a note. tags: list of short tags. links: list of related card slugs (recorded as [[wikilinks]]/relations).",
 )
