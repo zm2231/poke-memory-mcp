@@ -370,6 +370,38 @@ def _resolve_card(meta_path):
     return None
 
 
+_MATCH_STOP = {"the", "a", "an", "of", "to", "in", "on", "for", "and", "or", "is", "are", "was",
+               "were", "be", "with", "at", "by", "it", "this", "that", "what", "when", "who",
+               "how", "did", "do", "does", "i", "you", "my", "me", "we", "about", "from"}
+_MATCH_WORD_RX = re.compile(r"[a-z0-9][a-z0-9'-]*")
+
+
+def _match_reasons(query, title, body, width=360):
+    body = redact(body or "")
+    low = body.lower()
+    tlow = str(title or "").lower()
+    terms = [t for t in dict.fromkeys(_MATCH_WORD_RX.findall(str(query or "").lower()))
+             if len(t) >= 3 and t not in _MATCH_STOP]
+    matched = []
+    first_pos = None
+    for t in terms:
+        pos = low.find(t)
+        if pos >= 0 or t in tlow:
+            matched.append(t)
+        if pos >= 0 and (first_pos is None or pos < first_pos):
+            first_pos = pos
+    if first_pos is not None:
+        start = max(0, first_pos - width // 3)
+        snippet = body[start:start + width]
+        if start > 0:
+            snippet = "..." + snippet
+        if start + width < len(body):
+            snippet = snippet + "..."
+    else:
+        snippet = body[:width] + ("..." if len(body) > width else "")
+    return snippet.strip(), matched
+
+
 def _search_one(which, query, type_, project, person, limit, vector_weight):
     s = get_searcher(which)
     if s is None:
@@ -388,6 +420,7 @@ def _search_one(which, query, type_, project, person, limit, vector_weight):
             continue
         seen.add(str(p))
         score = getattr(r, "score", None)
+        snip, matched = _match_reasons(query, meta.get("title", ""), body)
         out.append({
             "path": str(p.relative_to(VAULT_ROOT)),
             "title": redact(meta.get("title", p.stem)),
@@ -396,7 +429,9 @@ def _search_one(which, query, type_, project, person, limit, vector_weight):
             "last_updated": str(_card_date(meta)),
             "scope": which,
             "_rank": (score if isinstance(score, (int, float)) else -rank),
-            "snippet": redact((body or "")[:600]),
+            "snippet": redact(snip),
+            "matched_terms": matched,
+            "match": "term+semantic" if matched else "semantic",
         })
         rank += 1
         if len(out) >= limit:
