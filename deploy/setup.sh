@@ -58,6 +58,10 @@ fi
 echo "==> app dir: $POKE_APP_DIR   vault: $POKE_VAULT_ROOT   ingress: $INGRESS"
 mkdir -p "$POKE_APP_DIR" "$LA" "$POKE_VAULT_ROOT"/{projects,people,inbox,.vault,docs}
 
+if [ ! -f "$POKE_VAULT_ROOT/.gitignore" ]; then
+  printf '%s\n' '.vault/' '.leann/' 'index.md' '*.tmp' '*.md.tmp' > "$POKE_VAULT_ROOT/.gitignore"
+fi
+
 echo "==> sync code"
 for f in vault_mcp.py vault_manifest.py reindex.sh gen_index.py lint.py audit_client.py export_messages.py ingest.sh; do
   [ -f "$SRC/$f" ] && cp "$SRC/$f" "$POKE_APP_DIR/$f"

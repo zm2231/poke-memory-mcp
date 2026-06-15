@@ -3,6 +3,7 @@ import re
 import sys
 import json
 import hashlib
+import datetime
 import subprocess
 import collections
 from pathlib import Path
@@ -13,6 +14,7 @@ POKE_NUMBERS = {re.sub(r"[^0-9]", "", n) for n in os.environ.get("POKE_NUMBERS",
 POKE_IDENTIFIERS = {s.strip() for s in os.environ.get("POKE_IDENTIFIERS", "").split(",") if s.strip()}
 NAME_RX = re.compile(os.environ.get("POKE_NAME_REGEX", r"^poke$"), re.I)
 MONTH_RX = re.compile(r"^\d{4}-\d{2}")
+MONTH_FILE_RX = re.compile(r"^poke-\d{4}-\d{2}\.(md|jsonl)$")
 
 
 def warn(msg):
@@ -117,38 +119,82 @@ def speaker(r):
     return "Me" if r["is_from_me"] else "Poke"
 
 
+def day_doc(day, rows):
+    fm = [
+        "---",
+        f"title: Poke conversation {day}",
+        "entity_type: messages",
+        "source_type: imessage",
+        "participant: poke",
+        f"date: {day}",
+        f"count: {len(rows)}",
+        "status: raw",
+        "---",
+        "",
+        f"# Poke conversation {day}",
+        "",
+    ]
+    body = [f"**{r['created_at'][:10]} {r['created_at'][11:16]} {speaker(r)}:** {r['text']}" for r in rows]
+    return "\n".join(fm + body) + "\n"
+
+
+def _atomic_write(path, text):
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(text)
+    os.replace(tmp, path)
+
+
+def write_days(days, today, out=OUT):
+    # Skip a closed day only when both md and jsonl match byte-for-byte (content, not mere
+    # existence); that exact-match skip is what keeps the HNSW reindex incremental, so don't
+    # weaken it. Writes are atomic so a partial/stale sidecar can't be mistaken for current.
+    out.mkdir(parents=True, exist_ok=True)
+    written = unchanged = deferred = 0
+    for day, rows in sorted(days.items()):
+        if day >= today:
+            deferred += 1
+            continue
+        md = out / f"poke-{day}.md"
+        jsonl = out / f"poke-{day}.jsonl"
+        new_md = day_doc(day, rows)
+        new_jsonl = "".join(json.dumps(r) + "\n" for r in rows)
+        try:
+            if md.exists() and jsonl.exists() and md.read_text() == new_md and jsonl.read_text() == new_jsonl:
+                unchanged += 1
+                continue
+        except OSError:
+            pass
+        _atomic_write(jsonl, new_jsonl)
+        _atomic_write(md, new_md)
+        written += 1
+    return written, unchanged, deferred
+
+
+def cleanup_month_files(out=OUT):
+    removed = 0
+    if not out.exists():
+        return 0
+    for p in out.iterdir():
+        if p.is_file() and MONTH_FILE_RX.match(p.name):
+            try:
+                p.unlink()
+                removed += 1
+            except OSError as e:
+                warn(f"could not remove stale month file {p.name}: {e}")
+    return removed
+
+
 def main():
     msgs, n_chats = collect()
-    msgs.sort(key=lambda r: r["created_at"])
-    months = collections.defaultdict(list)
+    msgs.sort(key=lambda r: (r["created_at"], r["guid"], r["sender"], r["text"]))
+    days = collections.defaultdict(list)
     for r in msgs:
-        months[r["created_at"][:7]].append(r)
-    OUT.mkdir(parents=True, exist_ok=True)
-    for ym, rows in sorted(months.items()):
-        first, last = rows[0]["created_at"][:10], rows[-1]["created_at"][:10]
-        fm = [
-            "---",
-            f"title: Poke conversation {ym}",
-            "entity_type: messages",
-            "source_type: imessage",
-            "participant: poke",
-            f"month: {ym}",
-            f"range: {first}..{last}",
-            f"count: {len(rows)}",
-            "status: raw",
-            "---",
-            "",
-            f"# Poke conversation {ym}",
-            "",
-        ]
-        body = [f"**{r['created_at'][:10]} {r['created_at'][11:16]} {speaker(r)}:** {r['text']}" for r in rows]
-        (OUT / f"poke-{ym}.md").write_text("\n".join(fm + body) + "\n")
-        with open(OUT / f"poke-{ym}.jsonl", "w") as f:
-            for r in rows:
-                f.write(json.dumps(r) + "\n")
-    print(f"chats matched: {n_chats}  messages: {len(msgs)}  months: {len(months)}")
-    for ym in sorted(months):
-        print(f"  {ym}: {len(months[ym])}")
+        days[r["created_at"][:10]].append(r)
+    today = datetime.datetime.now(datetime.timezone.utc).date().isoformat()
+    written, unchanged, deferred = write_days(days, today)
+    removed = cleanup_month_files()
+    print(f"chats matched: {n_chats}  messages: {len(msgs)}  days: {len(days)}  "
+          f"written: {written}  unchanged: {unchanged}  deferred(>=today): {deferred}  month-files-removed: {removed}")
 
 
 if __name__ == "__main__":
