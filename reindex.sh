@@ -59,8 +59,40 @@ build() {
   return 0
 }
 
+raw_indexed_files() {
+  "$VENV/python" - "$IDX/poke-vault-raw/documents.leann.passages.jsonl" <<'PY'
+import json, os, sys
+n = set()
+try:
+    for line in open(sys.argv[1]):
+        try:
+            m = json.loads(line).get("metadata", {})
+            f = m.get("file_path") or m.get("source") or ""
+            if f:
+                n.add(os.path.basename(f))
+        except Exception:
+            pass
+except OSError:
+    pass
+print(len(n))
+PY
+}
+
+build_raw() {
+  build poke-vault-raw "$VAULT/inbox" || return 1
+  local disk idx
+  disk=$(find "$VAULT/inbox" -name '*.md' 2>/dev/null | wc -l | tr -d ' ')
+  idx=$(raw_indexed_files 2>/dev/null)
+  idx=${idx:-0}
+  if [ "${POKE_REINDEX_FORCE:-0}" != "1" ] && [ "$disk" -gt 0 ] && [ $((idx * 100)) -lt $((disk * 90)) ]; then
+    echo "$(ts) raw coverage drift (indexed $idx of $disk files); forcing full rebuild" >> "$LOG"
+    POKE_REINDEX_FORCE=1 build poke-vault-raw "$VAULT/inbox" || return 1
+  fi
+  return 0
+}
+
 if [ "$MODE" = "raw" ]; then
-  build poke-vault-raw "$VAULT/inbox"
+  build_raw
   RAW=$?
   if [ "$RAW" -eq 0 ]; then
     ts > "$VAULT/.vault/reindex_stamp_raw"
@@ -78,8 +110,12 @@ CANON=$?
 RAW=0
 RAW_IDX="$IDX/poke-vault-raw/documents.index"
 NEWEST=$(find "$VAULT/inbox" -name '*.md' -newer "$RAW_IDX" 2>/dev/null | head -1)
-if [ ! -f "$RAW_IDX" ] || [ -n "$NEWEST" ]; then
-  build poke-vault-raw "$VAULT/inbox"
+DRIFT=0
+RAW_DISK=$(find "$VAULT/inbox" -name '*.md' 2>/dev/null | wc -l | tr -d ' ')
+RAW_IDXN=$(raw_indexed_files 2>/dev/null); RAW_IDXN=${RAW_IDXN:-0}
+[ "$RAW_DISK" -gt 0 ] && [ $((RAW_IDXN * 100)) -lt $((RAW_DISK * 90)) ] && DRIFT=1
+if [ ! -f "$RAW_IDX" ] || [ -n "$NEWEST" ] || [ "$DRIFT" = "1" ]; then
+  build_raw
   RAW=$?
 fi
 
