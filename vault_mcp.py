@@ -1406,6 +1406,110 @@ def vault_audit(event: str = "", errors_only: bool = False, since: str = "", lim
     return json.dumps({"matched": len(matched), "returned": len(out), "by_event": by_event, "entries": out}, indent=2)
 
 
+MAX_DUP_CARDS = 600
+_DUP_SIG_CAP = 400
+
+
+def _dup_signature(title, body):
+    toks = _MATCH_WORD_RX.findall((str(title) + " " + str(body or "")).lower())
+    return {t for t in toks[:_DUP_SIG_CAP] if len(t) >= 3 and t not in _MATCH_STOP}
+
+
+def _gather_dup_cards(scope):
+    paths = []
+    if scope in ("canonical", "all"):
+        for k in canon_dirs():
+            d = VAULT_ROOT / k
+            if d.exists():
+                paths += sorted(d.glob("*.md"))
+    if scope in ("inbox", "all"):
+        d = VAULT_ROOT / "inbox"
+        if d.exists():
+            paths += sorted(d.glob("*.md"))
+    truncated = len(paths) > MAX_DUP_CARDS
+    cards = []
+    for p in paths[:MAX_DUP_CARDS]:
+        meta, body = card_meta(p)
+        cards.append({"path": str(p.relative_to(VAULT_ROOT)),
+                      "title": redact(str(meta.get("title", p.stem))),
+                      "sig": _dup_signature(meta.get("title", ""), body)})
+    return cards, truncated
+
+
+@mcp.tool(
+    name="vault_duplicates",
+    description=(
+        "Find near-duplicate cards so you can merge them or avoid writing a redundant one. Clusters cards whose "
+        "text overlaps above a threshold (token-set Jaccard over title+body). scope: 'canonical' (default) | 'inbox' | "
+        "'all'. threshold: 0.3-0.95 overlap to count as near-duplicate (default 0.6; raise for stricter, near-identical "
+        "only). limit: max clusters returned (default 20). Returns clusters of 2+ cards with their paths/titles and the "
+        "strongest pairwise overlap. Call before vault_write to check you are not duplicating an existing card. Read-only."
+    ),
+)
+def vault_duplicates(scope: str = "canonical", threshold: float = 0.6, limit: int = 20) -> str:
+    scope = scope if scope in ("canonical", "inbox", "all") else "canonical"
+    try:
+        threshold = float(threshold)
+    except (TypeError, ValueError):
+        threshold = 0.6
+    threshold = min(0.95, max(0.3, threshold))
+    try:
+        limit = max(1, min(int(limit), 100))
+    except (TypeError, ValueError):
+        limit = 20
+    cards, truncated = _gather_dup_cards(scope)
+    parent = list(range(len(cards)))
+
+    def find(i):
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+
+    pairs = []
+    for a in range(len(cards)):
+        sa = cards[a]["sig"]
+        if not sa:
+            continue
+        la = len(sa)
+        for b in range(a + 1, len(cards)):
+            sb = cards[b]["sig"]
+            if not sb:
+                continue
+            lb = len(sb)
+            if min(la, lb) / max(la, lb) < threshold:
+                continue
+            inter = len(sa & sb)
+            if not inter:
+                continue
+            j = inter / (la + lb - inter)
+            if j >= threshold:
+                pairs.append((a, b, j))
+                ra, rb = find(a), find(b)
+                if ra != rb:
+                    parent[ra] = rb
+    best = {}
+    for a, b, j in pairs:
+        root = find(a)
+        if j > best.get(root, 0):
+            best[root] = j
+    clusters = {}
+    for i in range(len(cards)):
+        if cards[i]["sig"]:
+            clusters.setdefault(find(i), []).append(i)
+    out = []
+    for root, members in clusters.items():
+        if len(members) < 2:
+            continue
+        out.append({"score": round(best.get(root, 0), 3),
+                    "count": len(members),
+                    "members": [{"path": cards[m]["path"], "title": cards[m]["title"]} for m in members]})
+    out.sort(key=lambda c: c["score"], reverse=True)
+    audit("vault_duplicates", {"scope": scope, "threshold": threshold, "clusters": len(out)})
+    return json.dumps({"scope": scope, "threshold": threshold, "scanned": len(cards),
+                       "truncated": truncated, "cluster_count": len(out), "clusters": out[:limit]}, indent=2)
+
+
 @mcp.tool(
     name="vault_write",
     description="Persist a new fact or note to memory. Writes a timestamped card into inbox/ (searchable after the next reindex, promoted to canonical later). kind: an entity hint - 'note', or a canonical folder/singular like project/person (see vault_status for the live folder set); anything unrecognized is stored as a note. tags: list of short tags. links: list of related card slugs (recorded as [[wikilinks]]/relations).",
