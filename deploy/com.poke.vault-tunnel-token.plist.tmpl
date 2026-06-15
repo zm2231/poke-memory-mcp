@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.poke.vault-tunnel</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>@@CLOUDFLARED_BIN@@</string>
+    <string>tunnel</string>
+    <string>--no-autoupdate</string>
+    <string>run</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>TUNNEL_TOKEN</key>
+    <string>@@TUNNEL_TOKEN@@</string>
+  </dict>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>/tmp/cloudflared-poke-memory.log</string>
+  <key>StandardErrorPath</key>
+  <string>/tmp/cloudflared-poke-memory.log</string>
+</dict>
+</plist>

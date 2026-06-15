@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.poke.vault-mcp</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>@@APP_DIR@@/.venv/bin/python</string>
+    <string>@@APP_DIR@@/vault_mcp.py</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>@@APP_DIR@@</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <key>POKE_VAULT_ROOT</key>
+    <string>@@VAULT_ROOT@@</string>
+    <key>POKE_VAULT_INDEX</key>
+    <string>@@APP_DIR@@/.leann/indexes/poke-vault-canonical/documents.leann</string>
+    <key>POKE_VAULT_RAW_INDEX</key>
+    <string>@@APP_DIR@@/.leann/indexes/poke-vault-raw/documents.leann</string>
+    <key>POKE_VAULT_PORT</key>
+    <string>@@PORT@@</string>
+    <key>POKE_VAULT_STALE_AFTER</key>
+    <string>@@STALE_AFTER@@</string>
+    <key>POKE_APP_DIR</key>
+    <string>@@APP_DIR@@</string>
+    <key>EMBED_MODE</key>
+    <string>@@EMBED_MODE@@</string>
+    <key>EMBED_MODEL</key>
+    <string>@@EMBED_MODEL@@</string>
+    <key>EMBED_API_BASE</key>
+    <string>@@EMBED_API_BASE@@</string>
+    <key>EMBED_API_KEY</key>
+    <string>@@EMBED_API_KEY@@</string>
+    <key>LEANN_OPENAI_TIMEOUT</key>
+    <string>10</string>
+    <key>POKE_VECTOR_WEIGHT</key>
+    <string>@@VECTOR_WEIGHT@@</string>
+  </dict>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>@@APP_DIR@@/mcp.log</string>
+  <key>StandardErrorPath</key>
+  <string>@@APP_DIR@@/mcp.err</string>
+</dict>
+</plist>

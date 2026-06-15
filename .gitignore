@@ -1,0 +1,13 @@
+deploy/.env
+.env
+.token
+*.token
+config.env
+.cf_tunnel_token
+.venv/
+.leann/
+__pycache__/
+*.log
+*.err
+*.out
+.reindex.lock

@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.poke.vault-messages</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>@@APP_DIR@@/ingest.sh</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <key>POKE_APP_DIR</key>
+    <string>@@APP_DIR@@</string>
+    <key>POKE_VAULT_ROOT</key>
+    <string>@@VAULT_ROOT@@</string>
+    <key>POKE_NUMBERS</key>
+    <string>@@POKE_NUMBERS@@</string>
+    <key>POKE_NAME_REGEX</key>
+    <string>@@POKE_NAME_REGEX@@</string>
+    <key>POKE_IDENTIFIERS</key>
+    <string>@@POKE_IDENTIFIERS@@</string>
+    <key>EMBED_MODE</key>
+    <string>@@EMBED_MODE@@</string>
+    <key>EMBED_MODEL</key>
+    <string>@@EMBED_MODEL@@</string>
+    <key>EMBED_API_BASE</key>
+    <string>@@EMBED_API_BASE@@</string>
+    <key>EMBED_API_KEY</key>
+    <string>@@EMBED_API_KEY@@</string>
+  </dict>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>StartInterval</key>
+  <integer>@@INGEST_INTERVAL@@</integer>
+  <key>StandardOutPath</key>
+  <string>@@APP_DIR@@/ingest.log</string>
+  <key>StandardErrorPath</key>
+  <string>@@APP_DIR@@/ingest.log</string>
+</dict>
+</plist>

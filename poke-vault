@@ -1,0 +1,300 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SELF="${BASH_SOURCE[0]}"
+while [ -L "$SELF" ]; do
+  TARGET="$(readlink "$SELF")"
+  case "$TARGET" in
+    /*) SELF="$TARGET" ;;
+    *)  SELF="$(cd "$(dirname "$SELF")" && pwd)/$TARGET" ;;
+  esac
+done
+APP_DIR="$(cd "$(dirname "$SELF")" && pwd)"
+CONF="$APP_DIR/config.env"
+[ -f "$CONF" ] || { echo "poke-vault: $CONF not found; run the installer first." >&2; exit 1; }
+set -a; . "$CONF"; set +a
+for v in POKE_APP_DIR POKE_VAULT_ROOT POKE_VAULT_PORT EMBED_MODE EMBED_MODEL POKE_VAULT_INDEX; do
+  [ -n "${!v:-}" ] || { echo "poke-vault: $CONF is incomplete ($v missing); re-run the installer." >&2; exit 1; }
+done
+LA="$HOME/Library/LaunchAgents"
+PYBIN="$APP_DIR/.venv/bin/python"
+
+green(){ printf "  \033[32m●\033[0m %s\n" "$1"; }
+red(){ printf "  \033[31m●\033[0m %s\n" "$1"; }
+yellow(){ printf "  \033[33m●\033[0m %s\n" "$1"; }
+svc_up(){ launchctl list 2>/dev/null | awk -v l="$1" '$3==l{print; f=1} END{exit !f}' >/dev/null 2>&1; }
+
+services(){
+  local list="com.poke.vault-mcp com.poke.vault-reindex"
+  case "${INGRESS:-}" in named|cfapi|quick|ngrok) list="$list com.poke.vault-tunnel" ;; esac
+  [ "${INGEST:-0}" = "1" ] && list="$list com.poke.vault-messages"
+  echo "$list"
+}
+
+cmd_status(){
+  echo "poke-vault status"
+  for s in $(services); do
+    if svc_up "$s"; then green "$s up"; else red "$s DOWN"; fi
+  done
+  local code
+  code=$(curl -s -o /dev/null -w "%{http_code}" -m 5 -X POST "http://127.0.0.1:${POKE_VAULT_PORT}/mcp" \
+        -H "Accept: application/json, text/event-stream" -d '{}' 2>/dev/null) || true
+  code=${code:-000}
+  if [ "$code" = "401" ]; then green "endpoint 127.0.0.1:${POKE_VAULT_PORT} answering (401 without a token, as expected)"
+  elif [ "$code" = "000" ]; then red "endpoint not responding on 127.0.0.1:${POKE_VAULT_PORT}"
+  else yellow "endpoint returned $code (expected 401 for an unauthenticated probe)"; fi
+  local stamp="$POKE_VAULT_ROOT/.vault/reindex_stamp"
+  if [ -f "$stamp" ]; then
+    local age; age=$(( $(date +%s) - $(stat -f %m "$stamp") ))
+    if [ "$age" -lt "${POKE_VAULT_STALE_AFTER:-3600}" ]; then green "index fresh (${age}s ago)"; else yellow "index stale (${age}s ago)"; fi
+  else yellow "no reindex stamp yet"; fi
+}
+
+DOC_JSON=0
+DOC_RESULTS=()
+chk(){
+  local st="$1" name="$2" det="${3:-}"
+  if [ "$DOC_JSON" = "1" ]; then DOC_RESULTS+=("$st|$name|$det"); return; fi
+  case "$st" in
+    ok) green "$name${det:+: $det}" ;;
+    warn) yellow "$name${det:+: $det}" ;;
+    *) red "$name${det:+: $det}" ;;
+  esac
+}
+
+cmd_doctor(){
+  [ "${1:-}" = "--json" ] && DOC_JSON=1
+  [ "$DOC_JSON" = "1" ] || echo "poke-vault doctor"
+
+  if [ -x "$PYBIN" ]; then chk ok "venv python" "$PYBIN"; else chk fail "venv python" "missing at $PYBIN"; fi
+  if "$PYBIN" -c "import leann, mcp, yaml, openai" 2>/dev/null; then chk ok "core deps" "import ok"; else chk fail "core deps" "fail to import"; fi
+
+  if [ "${EMBED_MODE:-}" = "sentence-transformers" ]; then
+    "$PYBIN" -c "import sentence_transformers" 2>/dev/null && chk ok "embeddings" "sentence-transformers available" || chk fail "embeddings" "sentence-transformers not installed"
+  else
+    local base="${EMBED_API_BASE:-}"
+    if [ -z "$base" ]; then chk warn "embeddings" "EMBED_MODE=$EMBED_MODE but EMBED_API_BASE not set"
+    else
+      local mc; mc=$(curl -s -o /dev/null -w "%{http_code}" -m 6 "${base%/}/models" 2>/dev/null) || true; mc=${mc:-000}
+      [ "$mc" = "200" ] && chk ok "embeddings" "endpoint reachable ($base)" || chk warn "embeddings" "endpoint $base returned $mc"
+    fi
+  fi
+
+  local info pid les
+  info=$(launchctl list com.poke.vault-mcp 2>/dev/null || true)
+  pid=$(printf '%s\n' "$info" | awk -F'= ' '/"PID"/{gsub(/[^0-9]/,"",$2);print $2}')
+  les=$(printf '%s\n' "$info" | awk -F'= ' '/"LastExitStatus"/{gsub(/[^0-9-]/,"",$2);print $2}')
+  if [ -z "$info" ]; then chk fail "mcp service" "not loaded"
+  elif [ -z "$pid" ]; then chk fail "mcp service" "loaded but not running (last exit ${les:-?}) - crash-looping?"
+  else chk ok "mcp service" "running pid $pid"; fi
+
+  local powner
+  powner=$(lsof -nP -iTCP:"$POKE_VAULT_PORT" -sTCP:LISTEN -t 2>/dev/null | head -1) || true
+  if [ -z "$powner" ]; then chk warn "port $POKE_VAULT_PORT" "nothing listening"
+  elif [ "$powner" = "${pid:-x}" ]; then chk ok "port $POKE_VAULT_PORT" "owned by mcp (pid $powner)"
+  else chk warn "port $POKE_VAULT_PORT" "held by pid $powner, not the mcp service"; fi
+
+  if [ -f "$APP_DIR/.token" ]; then
+    local tmode tage
+    tmode=$(stat -f %A "$APP_DIR/.token" 2>/dev/null || echo "?")
+    tage=$(( ( $(date +%s) - $(stat -f %m "$APP_DIR/.token" 2>/dev/null || date +%s) ) / 86400 ))
+    [ "$tmode" = "600" ] && chk ok "token" "present (mode 600, ${tage}d old)" || chk warn "token" "mode $tmode (should be 600)"
+    [ "$tage" -gt 90 ] && chk warn "token age" "${tage}d old - consider poke-vault rotate-token"
+  else chk fail "token" "missing"; fi
+
+  if [ -f "$POKE_VAULT_ROOT/.vault/reindex_failed" ]; then
+    chk fail "reindex" "last build FAILED: $(tr -d '\n' < "$POKE_VAULT_ROOT/.vault/reindex_failed")"
+  else chk ok "reindex" "no failure marker"; fi
+
+  local stamp="$POKE_VAULT_ROOT/.vault/reindex_stamp"
+  if [ -f "$stamp" ]; then
+    local age; age=$(( $(date +%s) - $(stat -f %m "$stamp") ))
+    [ "$age" -lt "${POKE_VAULT_STALE_AFTER:-3600}" ] && chk ok "index freshness" "${age}s ago" || chk warn "index freshness" "stale (${age}s ago)"
+  else chk warn "index freshness" "no stamp yet"; fi
+
+  local ibn; ibn=$(find "$POKE_VAULT_ROOT/inbox" -maxdepth 1 -name '*.md' 2>/dev/null | wc -l | tr -d ' ') || true
+  [ "${ibn:-0}" -gt 500 ] && chk warn "inbox backlog" "$ibn raw cards (consider consolidating)" || chk ok "inbox" "${ibn:-0} raw cards"
+
+  local big=""
+  local lf sz
+  for lf in "$APP_DIR/mcp.log" "$APP_DIR/mcp.err" "$APP_DIR/reindex.log" "$POKE_VAULT_ROOT/.vault/mcp-audit.log"; do
+    [ -f "$lf" ] || continue
+    sz=$(stat -f %z "$lf" 2>/dev/null || echo 0)
+    [ "$sz" -gt 10485760 ] && big="$big $(basename "$lf")"
+  done
+  [ -n "$big" ] && chk warn "logs" "large:$big (reindex.log + audit self-rotate; mcp.log/mcp.err are launchd output, safe to clear)" || chk ok "logs" "sizes ok"
+
+  if [ "${INGEST:-0}" = "1" ]; then
+    local minfo mles
+    minfo=$(launchctl list com.poke.vault-messages 2>/dev/null || true)
+    mles=$(printf '%s\n' "$minfo" | awk -F'= ' '/"LastExitStatus"/{gsub(/[^0-9-]/,"",$2);print $2}')
+    if [ -z "$minfo" ]; then chk warn "message ingest" "enabled but service not loaded (re-run setup)"
+    elif [ -n "$mles" ] && [ "$mles" != "0" ]; then chk warn "message ingest" "last run failed (exit $mles) - grant Full Disk Access to the ingest job, or run 'poke-vault ingest' from a terminal that has it"
+    else chk ok "message ingest" "scheduled (daily)"; fi
+  fi
+
+  if command -v git >/dev/null 2>&1 && git -C "$POKE_VAULT_ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    git -C "$POKE_VAULT_ROOT" fetch -q origin 2>/dev/null || true
+    local lr; lr=$(git -C "$POKE_VAULT_ROOT" rev-list --left-right --count HEAD...@{u} 2>/dev/null | tr '\t' ' ' || echo "?")
+    [ "$lr" = "0 0" ] && chk ok "vault git" "in sync with remote" || chk warn "vault git" "diverged (ahead behind: $lr); run poke-vault sync"
+  else chk warn "vault git" "not a git repo (vault_sync unavailable)"; fi
+
+  if { [ "${INGRESS:-}" = "named" ] || [ "${INGRESS:-}" = "cfapi" ]; } && [ -n "${CF_HOSTNAME:-}" ]; then
+    local hc; hc=$(curl -s -o /dev/null -w "%{http_code}" -m 8 -X POST "https://${CF_HOSTNAME}/mcp" -H "Accept: text/event-stream" -d '{}' 2>/dev/null) || true; hc=${hc:-000}
+    [ "$hc" = "401" ] && chk ok "public url" "https://${CF_HOSTNAME} reachable" || chk warn "public url" "https://${CF_HOSTNAME} returned $hc"
+  fi
+
+  if [ "$DOC_JSON" = "1" ] && [ "${#DOC_RESULTS[@]}" -gt 0 ]; then
+    local jpy="$PYBIN"; [ -x "$jpy" ] || jpy=$(command -v python3 || echo /usr/bin/python3)
+    printf '%s\n' "${DOC_RESULTS[@]}" | "$jpy" -c 'import sys, json
+out=[]
+for line in sys.stdin:
+    line=line.rstrip("\n")
+    if not line: continue
+    parts=line.split("|",2)
+    while len(parts)<3: parts.append("")
+    out.append({"check":parts[1],"status":parts[0],"detail":parts[2]})
+print(json.dumps({"ok": all(c["status"]!="fail" for c in out), "checks": out}, indent=2))'
+  fi
+}
+
+cmd_reconnect(){
+  local url="${PUBLIC_URL:-}"
+  if [ -z "$url" ]; then
+    case "${INGRESS:-}" in named|cfapi) [ -n "${CF_HOSTNAME:-}" ] && url="https://${CF_HOSTNAME}/mcp" ;; esac
+  fi
+  if [ -z "$url" ]; then
+    echo "No stable public URL on record (ingress=${INGRESS:-?}; quick/ngrok URLs are ephemeral)."
+    echo "Start your tunnel, then run:"
+    echo "  npx poke@latest mcp add https://<your-public-url>/mcp -k \"\$(cat $APP_DIR/.token)\""
+    return
+  fi
+  echo "Register / re-register this server with Poke:"
+  echo "  npx poke@latest mcp add $url -k \"\$(cat $APP_DIR/.token)\""
+}
+
+cmd_sync(){
+  cd "$APP_DIR"
+  POKE_VAULT_ROOT="$POKE_VAULT_ROOT" POKE_VAULT_INDEX="$POKE_VAULT_INDEX" POKE_VAULT_RAW_INDEX="${POKE_VAULT_RAW_INDEX:-}" \
+    "$PYBIN" -c 'import sys, vault_mcp; print(vault_mcp.vault_sync(sys.argv[1] if len(sys.argv)>1 else ""))' "${1:-}"
+}
+
+cmd_reindex(){
+  POKE_APP_DIR="$POKE_APP_DIR" POKE_VAULT_ROOT="$POKE_VAULT_ROOT" EMBED_MODE="$EMBED_MODE" EMBED_MODEL="$EMBED_MODEL" \
+    EMBED_API_BASE="${EMBED_API_BASE:-}" EMBED_API_KEY="${EMBED_API_KEY:-}" \
+    bash "$APP_DIR/reindex.sh" "${1:-full}"
+}
+
+cmd_logs(){
+  local which="${1:-mcp}" f
+  case "$which" in
+    mcp) f="$APP_DIR/mcp.log" ;;
+    err) f="$APP_DIR/mcp.err" ;;
+    reindex) f="$APP_DIR/reindex.log" ;;
+    *) echo "logs: mcp | err | reindex"; return 1 ;;
+  esac
+  [ -f "$f" ] && tail -n 40 "$f" || echo "no log at $f yet"
+}
+
+cmd_rules(){
+  local voice="$POKE_VAULT_ROOT/docs/voice.md" vop="$POKE_VAULT_ROOT/docs/vault-operating-procedure.md"
+  if [ "${1:-}" = "--edit" ]; then "${EDITOR:-nano}" "$voice"; return; fi
+  echo "Edit your conventions:  poke-vault rules --edit   ($voice)"
+  echo
+  [ -f "$vop" ] && cat "$vop"; echo
+  [ -f "$voice" ] && cat "$voice"
+}
+
+cmd_tunnel_url(){
+  local url=""
+  case "${INGRESS:-}" in
+    named|cfapi) [ -n "${CF_HOSTNAME:-}" ] && url="https://${CF_HOSTNAME}/mcp" ;;
+    quick|ngrok)
+      if ! svc_up "com.poke.vault-tunnel"; then
+        echo "tunnel service is not running (see 'poke-vault status'); not reading a possibly-stale URL." >&2
+        return 1
+      fi
+      if [ "${INGRESS}" = "quick" ]; then
+        url=$(grep -Eo 'https://[a-z0-9-]+\.trycloudflare\.com' /tmp/cloudflared-poke-memory.log 2>/dev/null | tail -1) || true
+      else
+        url=$(curl -s -m 5 http://127.0.0.1:4040/api/tunnels 2>/dev/null | "$PYBIN" -c 'import sys, json
+try:
+    ts = json.load(sys.stdin).get("tunnels", [])
+    us = [t["public_url"] for t in ts if str(t.get("public_url","")).startswith("https")]
+    print(us[0] if us else "")
+except Exception:
+    print("")' 2>/dev/null) || true
+      fi
+      [ -n "$url" ] && url="$url/mcp"
+      if [ -n "$url" ]; then
+        local hc; hc=$(curl -s -o /dev/null -w "%{http_code}" -m 8 -X POST "$url" -H "Accept: text/event-stream" -d '{}' 2>/dev/null) || true; hc=${hc:-000}
+        [ "$hc" = "401" ] || { echo "captured URL $url is not reachable (got $hc); it is stale or the tunnel just (re)started. Wait a few seconds and retry." >&2; return 1; }
+      fi
+      ;;
+  esac
+  if [ -z "$url" ]; then
+    echo "could not determine the current public URL. Is the tunnel up? (poke-vault status; check /tmp/cloudflared-poke-memory.log or /tmp/ngrok-poke-memory.log)" >&2
+    return 1
+  fi
+  local tmp; tmp=$(mktemp)
+  grep -v '^PUBLIC_URL=' "$CONF" > "$tmp" 2>/dev/null || true
+  printf 'PUBLIC_URL=%q\n' "$url" >> "$tmp"
+  cat "$tmp" > "$CONF"
+  rm -f "$tmp"
+  echo "current public URL: $url"
+  echo "register with Poke:"
+  echo "  npx poke@latest mcp add $url -k \"\$(cat $APP_DIR/.token)\""
+}
+
+cmd_ingest(){
+  echo "ingesting the Poke iMessage thread into $POKE_VAULT_ROOT/inbox/messages/ ..."
+  POKE_VAULT_ROOT="$POKE_VAULT_ROOT" PATH="/opt/homebrew/bin:/usr/local/bin:$PATH" \
+    "$PYBIN" "$APP_DIR/export_messages.py" || { echo "ingest failed (is imsg installed and Full Disk Access granted to your terminal?)" >&2; return 1; }
+  cmd_reindex raw
+}
+
+cmd_rotate_token(){
+  printf "Rotate the bearer token? Poke (and any client) will be disconnected until re-registered. [y/N]: "
+  read -r a </dev/tty || a=""
+  [ "$a" = "y" ] || [ "$a" = "Y" ] || { echo "aborted."; return; }
+  [ -x "$PYBIN" ] || { echo "venv python missing; cannot generate a token." >&2; return 1; }
+  local newtok; newtok=$("$PYBIN" -c "import secrets;print(secrets.token_urlsafe(32))")
+  [ -n "$newtok" ] || { echo "token generation failed." >&2; return 1; }
+  printf '%s\n' "$newtok" > "$APP_DIR/.token"
+  chmod 600 "$APP_DIR/.token"
+  launchctl kickstart -k "gui/$(id -u)/com.poke.vault-mcp" >/dev/null 2>&1 || true
+  echo "token rotated and mcp restarted. Re-register with Poke:"
+  cmd_reconnect
+}
+
+cmd_uninstall(){
+  printf "Unload services and remove launchd plists + CLI? Your vault and notes are NOT touched. [y/N]: "
+  read -r ans </dev/tty || ans=""
+  [ "$ans" = "y" ] || [ "$ans" = "Y" ] || { echo "aborted."; return; }
+  for s in com.poke.vault-mcp com.poke.vault-reindex com.poke.vault-tunnel com.poke.vault-messages; do
+    launchctl unload "$LA/$s.plist" 2>/dev/null || true
+    rm -f "$LA/$s.plist"
+  done
+  rm -f "$HOME/.cloudflared/config-poke-memory.yml"
+  rm -f "$HOME/.local/bin/poke-vault"
+  echo "services + plists + CLI removed."
+  printf "Also delete the app dir (venv + index) at %s? [y/N]: " "$APP_DIR"
+  read -r ans2 </dev/tty || ans2=""
+  if [ "$ans2" = "y" ] || [ "$ans2" = "Y" ]; then rm -rf "$APP_DIR"; echo "app dir removed."; fi
+  echo "Your vault at $POKE_VAULT_ROOT was left untouched."
+}
+
+case "${1:-help}" in
+  status) cmd_status ;;
+  doctor) shift || true; cmd_doctor "${1:-}" ;;
+  reconnect) cmd_reconnect ;;
+  tunnel-url) cmd_tunnel_url ;;
+  sync) shift || true; cmd_sync "${1:-}" ;;
+  reindex) shift || true; cmd_reindex "${1:-full}" ;;
+  ingest) cmd_ingest ;;
+  rotate-token) cmd_rotate_token ;;
+  logs) shift || true; cmd_logs "${1:-mcp}" ;;
+  rules) shift || true; cmd_rules "${1:-}" ;;
+  uninstall) cmd_uninstall ;;
+  *) echo "poke-vault <status|doctor [--json]|reconnect|tunnel-url|sync [msg]|reindex [full|raw]|ingest|rotate-token|logs [mcp|err|reindex]|rules [--edit]|uninstall>" ;;
+esac

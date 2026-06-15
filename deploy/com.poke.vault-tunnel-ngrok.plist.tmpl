@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.poke.vault-tunnel</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>@@NGROK_BIN@@</string>
+    <string>http</string>
+    <string>@@PORT@@</string>
+    <string>--log</string>
+    <string>stdout</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+  </dict>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>/tmp/ngrok-poke-memory.log</string>
+  <key>StandardErrorPath</key>
+  <string>/tmp/ngrok-poke-memory.log</string>
+</dict>
+</plist>

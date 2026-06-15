@@ -1,0 +1,9 @@
+tunnel: @@CF_TUNNEL_ID@@
+credentials-file: @@CF_CRED_FILE@@
+
+ingress:
+  - hostname: @@CF_HOSTNAME@@
+    service: http://localhost:@@PORT@@
+    originRequest:
+      httpHostHeader: localhost
+  - service: http_status:404
