@@ -34,7 +34,7 @@ launchd services keep it live:
 | `vault_verify(claim, scope?, limit?)` | Fact-check a claim: retrieves evidence then an LLM judge (via iq chat) returns a conservative verdict (supported/contradicted/not_enough_evidence) + confidence + citing paths. Pre-flight 'do I actually know this'. Degrades to evidence-only if the judge is unavailable. |
 | `vault_related(path?, query?, scope?, limit?)` | Associative recall: memories related to a card/topic, each tagged with why - `linked` ([[wikilinks]]), `shared_tag` (overlapping tags), `semantic` (vector). Works without hard links. |
 | `vault_warm()` | Preload the embedding model so subsequent searches are fast (the backend unloads idle models after a few minutes). Call at the start of a session or cron/automation that runs several searches. |
-| `vault_rules()` | Return the vault operating rules + your voice/write playbook (sourced verbatim from `docs/vault-operating-procedure.md` + `docs/voice.md`) so any agent pulls the conventions before writing. Read-only. |
+| `vault_rules()` | Return the vault operating rules + voice/write playbook + cold-start onboarding (verbatim from `docs/vault-operating-procedure.md` + `docs/voice.md` + `docs/onboarding-playbook.md`) plus the live active-folder list, so any agent pulls the conventions before writing. Read-only. |
 | `vault_sync(message?)` | Reconcile the vault with its git remote: commit local changes, `pull --rebase --autostash`, push. Pulls in writes other agents made via the GitHub API (and indexes them), publishes local writes. Fixed git sequence only, never a shell. Aborts cleanly on conflict. |
 | `vault_get(path, offset?)` | Fetch a card; large files are byte-windowed. |
 | `vault_status()` | Snapshot: layout, live counts (cards/folder + totals, inbox, messages), index freshness, and embedding backend + whether the model is warm. |
@@ -115,7 +115,7 @@ poke-vault uninstall   # remove services + CLI (your vault is never touched)
 
 ### Customizing the rules agents follow
 
-`vault_rules` serves whatever is in `<vault>/docs/voice.md` and `<vault>/docs/vault-operating-procedure.md`. The installer seeds editable templates only if those files are absent, so your own versions are preserved. Edit them (or `poke-vault rules --edit`) to set your voice and write conventions; point `POKE_RULES_DOCS` at different files to override entirely.
+`vault_rules` serves whatever is in `<vault>/docs/vault-operating-procedure.md`, `<vault>/docs/voice.md`, and `<vault>/docs/onboarding-playbook.md` (plus a live active-folder list). The installer seeds editable templates only if those files are absent, so your own versions are preserved. Edit them (or `poke-vault rules --edit`) to set your voice, write conventions, and cold-start behavior; point `POKE_RULES_DOCS` at different files to override entirely.
 
 ### Agent / non-interactive install
 

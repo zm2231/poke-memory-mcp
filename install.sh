@@ -192,6 +192,13 @@ bold "Customize the rules your agents follow"
 echo "Edit $POKE_VAULT_ROOT/docs/voice.md (your voice + write playbook) and"
 echo "     $POKE_VAULT_ROOT/docs/vault-operating-procedure.md — or run: poke-vault rules --edit"
 echo "vault_rules serves whatever is in those files; agents pull them before writing."
+echo
+bold "Teach Poke to use it (paste this as a Poke automation/recipe)"
+echo "Poke pulls the rules before any write anyway, but adding this makes it onboard + check memory proactively:"
+echo
+echo '  At the start of a new conversation and once a day, call the vault_rules tool'
+echo '  and follow it (including the onboarding steps when the vault is new). Save'
+echo '  anything worth remembering with vault_write, and keep people/owner.md current.'
 if [ "${INGEST:-0}" = "1" ]; then
   echo
   bold "One manual step for scheduled message ingest"

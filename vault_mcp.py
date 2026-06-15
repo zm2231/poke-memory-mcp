@@ -1849,7 +1849,7 @@ def vault_patch(path: str, append: str = "", set_fields: dict = None) -> str:
 
 
 RULES_DOCS = [s.strip() for s in os.environ.get(
-    "POKE_RULES_DOCS", "docs/vault-operating-procedure.md,docs/voice.md").split(",") if s.strip()]
+    "POKE_RULES_DOCS", "docs/vault-operating-procedure.md,docs/voice.md,docs/onboarding-playbook.md").split(",") if s.strip()]
 MAX_RULES_BYTES = 40 * 1024
 _FALLBACK_RULES = (
     "No rules docs are present in the vault. Defaults: write new facts to inbox/ via vault_write; "
@@ -1918,8 +1918,9 @@ def _folders_doc():
     lines = [
         "## Active folders (live, from .vault/manifest.json)",
         "These are the only folders in use. Do not write to or invent any other folder. "
-        "If the owner needs a new category, propose it in plain language and call vault_register_folder once they "
-        "agree; if they decline or ignore it, call vault_reject_folder so it is never proposed again. "
+        "If the owner needs a new category, propose it in plain language and call vault_register_folder only on an "
+        "explicit yes; on an explicit no call vault_reject_folder so it is never proposed again; on silence or a "
+        "non-answer do nothing (do not reject, do not nag). "
         "A decision, event, topic, or source is metadata that belongs inside the relevant project or person card, "
         "not its own folder, unless a folder for it has been registered.",
         "",
@@ -1998,10 +1999,10 @@ def vault_register_folder(name: str, trigger: str, desc: str = "") -> str:
 @mcp.tool(
     name="vault_reject_folder",
     description=(
-        "Record that the owner declined a proposed folder, so you never pitch it again. Use this for the no-tap (or an "
-        "ignored proposal) in the propose-a-folder flow. name: the slug you proposed. It is added to the manifest's "
-        "rejected list, surfaced in vault_status/vault_rules so future sessions know not to re-propose it. Does not "
-        "delete any existing folder; only suppresses the suggestion."
+        "Record that the owner EXPLICITLY declined a proposed folder, so you never pitch it again. Use only on an "
+        "explicit no - not on silence or a non-answer (for those, do nothing and optionally revisit later). name: the "
+        "slug you proposed. It is added to the manifest's rejected list, surfaced in vault_status/vault_rules so future "
+        "sessions know not to re-propose it. Does not delete any existing folder; only suppresses the suggestion."
     ),
 )
 def vault_reject_folder(name: str) -> str:

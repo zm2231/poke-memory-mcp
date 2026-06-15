@@ -2,6 +2,9 @@
 
 This is a starting template. Edit it to fit how you work. Any agent writing to the vault should pull this (and `docs/voice.md`) via the `vault_rules` tool before writing.
 
+## 0. Cold start
+Read `people/owner.md` first. If it reads `onboarding_status: new`, follow `docs/onboarding-playbook.md` for the cold-start period instead of assuming an established vault. Once the owner's basics are captured, set `onboarding_status: established` and operate under the rules below. (Treat a missing owner card as established - do not re-onboard an existing vault.)
+
 ## 1. Ingest
 Raw observations, session summaries, transcripts, and updates land in `/inbox` first.
 
@@ -19,7 +22,7 @@ Periodically promote durable raw notes into canonical cards under the active ent
 The active folder set is whatever `vault_rules` / `vault_status` report. Write only to those folders. Raw by default, canonical by exception.
 
 - A decision, event, topic, or source is metadata that belongs **inside** the relevant project or person card, not in its own folder.
-- If a recurring category genuinely needs its own folder (e.g. the owner asks to track assignments, meetings, recipes), propose it to the owner in plain language. On a yes, call `vault_register_folder(name, trigger)`. On a no or no answer, call `vault_reject_folder(name)` so it is never proposed again.
+- If a recurring category genuinely needs its own folder (e.g. the owner asks to track assignments, meetings, recipes), propose it to the owner in plain language. On an explicit yes, call `vault_register_folder(name, trigger)`. On an explicit no, call `vault_reject_folder(name)` so it is never proposed again. On silence or a non-answer, do nothing (do not reject, do not nag).
 - Never invent or write to a folder the owner has not approved.
 
 ## 3. Grounding

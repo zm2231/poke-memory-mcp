@@ -67,12 +67,47 @@ if [ ! -f "$POKE_VAULT_ROOT/.gitignore" ]; then
   printf '%s\n' '.vault/' '.leann/' 'index.md' '*.tmp' '*.md.tmp' > "$POKE_VAULT_ROOT/.gitignore"
 fi
 
+if [ ! -f "$POKE_VAULT_ROOT/people/owner.md" ]; then
+  if find "$POKE_VAULT_ROOT/projects" "$POKE_VAULT_ROOT/people" -name '*.md' 2>/dev/null | grep -q .; then
+    OB_STATUS=established
+  else
+    OB_STATUS=new
+  fi
+  OB_DATE=$(date -u +%Y-%m-%d)
+  cat > "$POKE_VAULT_ROOT/people/owner.md" <<OWNER
+---
+title: Owner
+kind: people
+entity_type: people
+status: canonical
+onboarding_status: $OB_STATUS
+preferred_name: ""
+roles: []
+created: $OB_DATE
+updated: $OB_DATE
+---
+
+# Owner
+
+Durable profile of the vault's owner. The assistant keeps this current during and after onboarding (see docs/onboarding-playbook.md). Flat facts go in the frontmatter via set_fields; the sections below take appended dated lines.
+
+## Profile
+(roles, recurring goals, stated preferences, do-not-assume notes)
+
+## Observed patterns
+(append: topic, count so far, example, last seen)
+
+## Proposed folders
+(append: slug, the ask, status pending|accepted|rejected, when)
+OWNER
+fi
+
 echo "==> sync code"
 for f in vault_mcp.py vault_manifest.py reindex.sh gen_index.py lint.py audit_client.py export_messages.py ingest.sh; do
   [ -f "$SRC/$f" ] && cp "$SRC/$f" "$POKE_APP_DIR/$f"
 done
 chmod +x "$POKE_APP_DIR/reindex.sh" "$POKE_APP_DIR/ingest.sh"
-for d in vault-operating-procedure.md voice.md; do
+for d in vault-operating-procedure.md voice.md onboarding-playbook.md; do
   [ -f "$POKE_VAULT_ROOT/docs/$d" ] || { [ -f "$SRC/sample-vault/docs/$d" ] && cp "$SRC/sample-vault/docs/$d" "$POKE_VAULT_ROOT/docs/$d"; }
 done
 
